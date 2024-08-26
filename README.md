@@ -13,3 +13,11 @@ Installiere die nötigen Requirements:
 pip install -r requirements.txt
 ```
 Und dann setze in die Datei api.py deinen OpenAI API Key ein oder gebe diesen beim Start des Programms eins.
+
+```console
+python3.12 api.py
+```
+
+## Screenshot
+
+![image](https://github.com/user-attachments/assets/300c8a7d-738d-4d2a-9ab4-5a85914dcb21)
