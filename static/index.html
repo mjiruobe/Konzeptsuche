@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Konzeptsuche</title>
+    <script type="module" src="https://cdn.jsdelivr.net/npm/zero-md@3?register"></script>
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <script src="cld-min.js"></script>
+    <script>
+        /// TODO: if use in production make XSS / break out imppossible
+        function outputExamples() {
+            prompts = ["Ich habe beobachtet, dass Pflanzen bei Sonneneinstrahlung Sauerstoff produzieren", "Wenn Photonen auf Silizium treffen, dann springt ein Valenzelektron heraus.", "Insekten bekommen viele Nachkommen aber kümmern sich wenig. Dahingegen bekommen Menschen wenig Nachkommen und kümmern sich viel.", "Wenn man Infrastruktur einmal gebaut hat, sind die Kosten geringer diese wiederzuverwenden.", 'Wenn ich Hunden eine Belohnung für das "Sitz" machen gebe, dann lernen sie dieses Kommando schneller.'];
+            prompts.forEach(element => {
+                template_html = `
+
+          <div class="ag-courses_item">
+        <a href="#" class="ag-courses-item_link" onclick="document.getElementById('conceptInput').innerText = '${element}';">
+          <div class="ag-courses-item_bg"></div>
+  
+          <div class="ag-courses-item_title">
+                ${element}
+          </div>
+  
+          <div class="ag-courses-item_date-box">
+            Probiere es aus
+          </div>
+        </a>
+      </div>
+      
+      `;
+                document.write(template_html);
+            });
+
+        }
+
+        async function searchConceptWithSources() {
+            const conceptInput = document.getElementById('conceptInput').value;
+            const outputDiv = document.getElementById('output');
+            outputDiv.innerText = "";
+
+            const response = await fetch('/search_concept_with_sources', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ concept_idea: conceptInput })
+            });
+
+            const result = await response.json();
+            output = result.response;
+            console.log(output);
+
+            let zeromd_el = document.createElement("zero-md")
+            let script_el = document.createElement("script")
+            let template_el = document.createElement("template");
+
+            script_el.type = "text/markdown";
+            script_el.innerText = output;
+            template_el.innerText = "<style>.markdown-body { background-color: transparent; }</style>";
+            zeromd_el.appendChild(script_el);
+            zeromd_el.appendChild(template_el);
+
+            outputDiv.appendChild(zeromd_el);
+
+            outputDiv.innerHTML += `<br>Folgende
+    Quellen finde ich dafür auf Wikipedia:<br>`;
+            concepts = getConceptsFromOutput(output);
+
+            searchWikipedia(concepts);
+        }
+
+        function getWikipediaURLByTitle(title) {
+            return `https://de.wikipedia.org/wiki/${encodeURIComponent(title)}`;
+        }
+
+        function getNotFoundError(term) {
+            return new Error(`Kein Artikel für "${term}" gefunden`);
+        }
+
+        function getTermsByConcept(concept) {
+            const terms = [];
+            const regex = /([^\(]*)(?:\(?([^)]+)?(?:\))?)?/;
+            const match = concept.match(regex);
+            return !match ? [] : match.splice(1).filter((val) => val != undefined)
+        }
+
+        async function searchWikipedia(concepts) {
+            const outputDiv = document.getElementById('output');
+            for (const concept of concepts) {
+                var current_term = 0;
+                let terms = getTermsByConcept(concept);
+
+                let listedUrls = [];
+                for (const term of terms) {
+                    const deWikiUrl =
+                        `https://de.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(term)}&format=json&origin=*`;
+                    const enWikiUrl =
+                        `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(term)}&format=json&origin=*`;
+                    try {
+                        const response = await fetch(deWikiUrl);
+                        let lang = detectLanguage(term);
+                        let isEnglish = lang == "English";
+                        console.log("Language: " + lang + ", isEnglish: " + isEnglish);
+
+                        var enResponse = null;
+                        if (isEnglish) {
+                            enResponse = await fetch(enWikiUrl);
+                        }
+
+                        if (!response.ok && (isEnglish && !enResponse.ok)) throw getNotFoundError(term);
+
+                        const data = await response.json();
+                        var enData = null;
+
+                        if (isEnglish && enResponse.ok) {
+                            enData = await enResponse.json();
+                        }
+
+                        console.log("Log Wikipedia Response:");
+                        console.log(data);
+
+
+                        if (parseInt(data.query.searchinfo.totalhints == 0) && parseInt(enData.query.searchinfo.totalhints == 0)) throw getNotFoundError(term);
+
+                        const results = data.query.search;
+
+                        var result_str = terms.length > 1 && data.query.searchinfo.totalhints > 0 ? "Wikipedia Suche zu " + term : "";
+                        results.forEach(element => {
+                            var title = element.title;
+                            var quote = element.snippet;
+
+                            let url = getWikipediaURLByTitle(title);
+                            if (!(url in listedUrls)) {
+                                result_str += `<p>"${quote}"<br \><span style="font-size: small;">(erwähnt im Wikipedia Artikel: <a
+                                    href="${url}" target="_blank">${title}</a>)</span></p>`;
+                                listedUrls.push(url);
+                            }
+
+                        });
+
+                        if (isEnglish && enResponse.ok && enData.query.searchinfo.totalhints > 0) {
+                            result_str += "<p>Und im englischsprachigen Wikipedia:</p>";
+                            enData.query.search.forEach(element => {
+                                var title = element.title;
+                                var quote = element.snippet;
+
+                                let url = getWikipediaURLByTitle(title);
+                                if (!(url in listedUrls)) {
+                                    result_str += `<p>"${quote}"<br \><span style="font-size: small;">(erwähnt im Wikipedia Artikel: <a
+                                    href="${url}" target="_blank">${title}</a>)</span></p>`;
+                                    listedUrls.push(url);
+                                }
+
+                            });
+                        }
+
+
+                        outputDiv.innerHTML += current_term == 0 ? `
+    <h2>${concept}</h2>
+    ` + result_str :
+                            result_str;
+                    } catch (error) {
+                        outputDiv.innerHTML += `
+    <p>Fehler bei ${term} (${concept}): ${error.message}</p>
+    `;
+                    }
+                    current_term++;
+                }
+                console.log("Anzahl Wikipedia Suchergebnisse: " + listedUrls.length);
+                if (listedUrls.length == 0) {
+                    console.log("Keine Ergebnisse für " + concept);
+                    outputDiv.innerHTML += "<p>Keine Ergebnisse für " + concept + " gefuden!</p>";
+                }
+                outputDiv.innerHTML += "<hr>";
+            }
+        }
+
+        function getConceptsFromOutput(ki_output) {
+            const lines = ki_output.split('\n');
+            const fachbegriffe = [];
+            const regex = /Fachbegriff \d+: (.+)/;
+
+            lines.forEach(line => {
+                const match = line.match(regex);
+                if (match && match[1]) {
+                    fachbegriffe.push(match[1].trim());
+                }
+            });
+
+            return fachbegriffe;
+        }
+    </script>
+</head>
+
+<body>
+    <h1>Konzeptsuche</h1>
+    <div class="ag-format-container">
+        <div class="ag-courses_box">>
+            <script type="text/javascript">
+                outputExamples();
+            </script>
+        </div>
+    </div>
+    <textarea id="conceptInput" rows="4" cols="50"
+        placeholder="Geben Sie Ihr Konzept ein, dass ie beobachtet haben / etwas dessen Namen Sie nicht kennen"></textarea>
+    <br>
+    <button onclick="searchConceptWithSources()">Suche mit Quellen</button>
+    <div id="output"></div>
+</body>
+
+</html>
